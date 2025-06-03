@@ -1,7 +1,5 @@
 # ✅ BOT DE TRADING OTIMIZADO — Binance Futures Testnet (Google Colab)
 
-!pip install python-binance ta matplotlib
-
 import time
 import numpy as np
 import pandas as pd
