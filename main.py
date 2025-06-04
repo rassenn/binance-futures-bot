@@ -1,122 +1,85 @@
-# ✅ BOT DE TRADING OTIMIZADO — Binance Futures Testnet (Google Colab)
-
+import os
 import time
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+import threading
 from binance.client import Client
-from binance.enums import *
-import ta
-from IPython.display import clear_output
+from ta.momentum import RSIIndicator
+from ta.trend import SMAIndicator
+import requests
+import pandas as pd
 
-# === 1. CONFIGURAÇÃO INICIAL ===
-API_KEY = 'SUA_API_KEY_AQUI'
-API_SECRET = 'SUA_API_SECRET_AQUI'
+# Configurações
+PAIRS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'OPUSDT', 'DOGEUSDT']
+TRADE_AMOUNT = 10.0
+RSI_PERIOD = 14
+SMA_PERIOD = 14
+RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 30
 
-client = Client(API_KEY, API_SECRET, testnet=True)
+API_KEY = os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_API_SECRET")
+TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-SYMBOL = 'BTCUSDT'
-INTERVAL = '5m'
-QUANTIDADE = 0.001  # ajuste baseado no preço atual do BTC (~10 USDT)
-STOP_LOSS_PERCENT = 0.5
-TAKE_PROFIT_PERCENT = 1
+client = Client(API_KEY, API_SECRET)
 
-# === 2. VARIÁVEIS DE RESULTADO ===
-total_sinais = 0
-trades_executados = 0
-trades_lucro = 0
-lucro_acumulado = 0
-lucros = []
-ultima_operacao = 'Nenhuma ainda'
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+    payload = {"chat_id": TG_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=payload)
+    except:
+        pass
 
-# === 3. BUSCAR DADOS ===
-def get_data(symbol, interval, limit=100):
-    klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
-    df = pd.DataFrame(klines, columns=[
-        'timestamp','open','high','low','close','volume',
-        'close_time','quote_asset_volume','number_of_trades',
-        'taker_buy_base_asset_volume','taker_buy_quote_asset_volume','ignore'
-    ])
-    df['close'] = pd.to_numeric(df['close'])
-    df['volume'] = pd.to_numeric(df['volume'])
-    return df
+def fetch_klines(symbol):
+    klines = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1MINUTE, limit=100)
+    closes = [float(k[4]) for k in klines]
+    return closes
 
-# === 4. ESTRATÉGIA OTIMIZADA ===
-def sinal_trade(df):
-    global total_sinais
-    df['ema'] = ta.trend.ema_indicator(df['close'], window=20)
-    df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=10).rsi()
-    volume_threshold = np.percentile(df['volume'], 60)
+def analyze(symbol):
+    closes = fetch_klines(symbol)
+    if len(closes) < RSI_PERIOD:
+        return None
 
-    ultimo = df.iloc[-1]
-    penultimo = df.iloc[-2]
+    rsi = RSIIndicator(close=pd.Series(closes), window=RSI_PERIOD).rsi().iloc[-1]
+    sma = SMAIndicator(close=pd.Series(closes), window=SMA_PERIOD).sma_indicator().iloc[-1]
+    last_price = closes[-1]
 
-    if (
-        ultimo['rsi'] < 30 and
-        penultimo['close'] < penultimo['ema'] and
-        ultimo['close'] > ultimo['ema'] and
-        ultimo['volume'] > volume_threshold
-    ):
-        total_sinais += 1
-        return 'buy'
+    if rsi < RSI_OVERSOLD and last_price > sma:
+        return "BUY"
+    elif rsi > RSI_OVERBOUGHT and last_price < sma:
+        return "SELL"
     return None
 
-# === 5. EXECUTAR ORDEM ===
-def executar_ordem(direcao):
-    global trades_executados, trades_lucro, lucro_acumulado, ultima_operacao
-
-    preco_atual = float(client.futures_symbol_ticker(symbol=SYMBOL)['price'])
-    stop = preco_atual * (1 - STOP_LOSS_PERCENT / 100)
-    alvo = preco_atual * (1 + TAKE_PROFIT_PERCENT / 100)
-
-    order = client.futures_create_order(
-        symbol=SYMBOL,
-        side=SIDE_BUY,
-        type=ORDER_TYPE_MARKET,
-        quantity=QUANTIDADE
-    )
-
-    trades_executados += 1
-    lucro = np.round(preco_atual * (TAKE_PROFIT_PERCENT / 100), 2)
-    lucro_acumulado += lucro
-    lucros.append(lucro)
-    trades_lucro += 1  # simplificado, assume sempre lucro
-    ultima_operacao = f"Buy @ {preco_atual:.2f} | TP hit ✅"
-
-# === 6. PAINEL ===
-def mostrar_painel():
-    clear_output(wait=True)
-    print("\n📊 PAINEL DE RESULTADOS ATUALIZADO\n" + "-"*35)
-    print(f"Total de sinais: {total_sinais}")
-    print(f"Trades executados: {trades_executados}")
-    if trades_executados > 0:
-        taxa_acerto = int((trades_lucro / trades_executados) * 100)
-        print(f"Taxa de acerto (%): {taxa_acerto}")
-    print(f"Lucro acumulado (USDT): {lucro_acumulado:.2f}")
-    print(f"Última operação: {ultima_operacao}\n")
-
-    if lucros:
-        plt.plot(lucros, marker='o', linestyle='-', color='green')
-        plt.title('Lucro Acumulado por Trade')
-        plt.xlabel('Nº Trade')
-        plt.ylabel('Lucro (USDT)')
-        plt.grid(True)
-        plt.show()
-
-# === 7. LOOP PRINCIPAL ===
-while True:
+def execute_trade(symbol, side):
     try:
-        df = get_data(SYMBOL, INTERVAL)
-        sinal = sinal_trade(df)
-
-        if sinal:
-            executar_ordem(sinal)
-        else:
-            ultima_operacao = "Nenhum sinal no momento."
-
-        mostrar_painel()
-
+        price = float(client.get_symbol_ticker(symbol=symbol)["price"])
+        quantity = round(TRADE_AMOUNT / price, 3)
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY if side == "BUY" else Client.SIDE_SELL,
+            type="MARKET",
+            quantity=quantity
+        )
+        send_telegram_message(f"✅ {side} em {symbol} executado.
+Preço: {price}")
     except Exception as e:
-        print(f"⚠️ Erro: {e}")
+        send_telegram_message(f"⚠️ Erro ao operar {symbol}: {e}")
 
-    time.sleep(60 * 5)  # espera 5 minutos
+def monitor_pair(symbol):
+    while True:
+        signal = analyze(symbol)
+        if signal:
+            execute_trade(symbol, signal)
+        time.sleep(60)
+
+def main():
+    threads = []
+    for pair in PAIRS:
+        t = threading.Thread(target=monitor_pair, args=(pair,))
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+
+if __name__ == "__main__":
+    main()
