@@ -60,8 +60,8 @@ def execute_trade(symbol, side):
             type="MARKET",
             quantity=quantity
         )
-        send_telegram_message(f"✅ {side} em {symbol} executado.")
-Preço: {price}")
+        send_telegram_message(f"✅ {side} em {symbol} executado.\nPreço: {price}")
+
     except Exception as e:
         send_telegram_message(f"⚠️ Erro ao operar {symbol}: {e}")
 
