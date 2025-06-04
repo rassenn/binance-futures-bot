@@ -1,12 +1,12 @@
 import os
 import time
+import requests
 import logging
 import matplotlib.pyplot as plt
 from binance.client import Client
 from binance.enums import *
 from ta.momentum import RSIIndicator
 from ta.trend import SMAIndicator
-from telegram import Bot
 
 # Configurações
 symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
@@ -25,10 +25,14 @@ telegram_token = os.getenv("TELEGRAM_TOKEN")
 telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
 client = Client(api_key, api_secret)
-bot = Bot(token=telegram_token)
 
 def send_telegram_message(message):
-    bot.send_message(chat_id=telegram_chat_id, text=message)
+    url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+    data = {"chat_id": telegram_chat_id, "text": message}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"Erro ao enviar mensagem Telegram: {e}")
 
 def get_klines(symbol):
     try:
