@@ -1,1 +1,0 @@
-start: python bot_binance_futures.py
